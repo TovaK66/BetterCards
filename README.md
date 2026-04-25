@@ -12,7 +12,8 @@ No more guessing whether a card completes a combo or whether you've seen it befo
 
 ## Screenshots
 
-*(add screenshots here)*
+![Screenshot 1](screenshots/screenshot1.jpg)
+![Screenshot 2](screenshots/screenshot2.jpg)
 
 ---
 
@@ -33,7 +34,7 @@ No more guessing whether a card completes a combo or whether you've seen it befo
 
 ## Building from source
 
-> The `.csproj` references DLLs from a local Vampire Crawlers installation.  
+> The `.csproj` references DLLs from a local Vampire Crawlers installation.
 > Update the `HintPath` entries in `VCComboIndicator.csproj` to match your own install path before building.
 
 ```
