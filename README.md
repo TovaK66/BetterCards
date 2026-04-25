@@ -47,6 +47,9 @@ dotnet build -c Release
 
 **TovaK**
 
+If you enjoy the mod, you can support me on Ko-fi:  
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/tovak66)
+
 ---
 
 ## License
