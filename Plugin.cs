@@ -14,7 +14,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.0.0")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.0.1")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -35,14 +35,37 @@ public class ComboObserver : MonoBehaviour
     public ComboObserver(IntPtr ptr) : base(ptr) { }
 
     private bool _wasOpen = false;
+    private string _lastCardSignature = "";
 
     public void Awake() { }
+
+    static string GetCardSignature(ChooseCardModal modal)
+    {
+        var views = modal._cardChoiceViews;
+        if (views == null) return "";
+        var sb = new System.Text.StringBuilder();
+        foreach (var v in views)
+            sb.Append(v?.CardConfig?.name ?? "null").Append("|");
+        return sb.ToString();
+    }
 
     public void Update()
     {
         var modal = UObject.FindObjectOfType<ChooseCardModal>();
         bool isOpen = modal != null && modal.IsOpen;
-        if (isOpen && !_wasOpen) OnModalOpened(modal);
+        if (isOpen)
+        {
+            string sig = GetCardSignature(modal);
+            if (!_wasOpen || sig != _lastCardSignature)
+            {
+                _lastCardSignature = sig;
+                OnModalOpened(modal);
+            }
+        }
+        else
+        {
+            _lastCardSignature = "";
+        }
         _wasOpen = isOpen;
     }
 
