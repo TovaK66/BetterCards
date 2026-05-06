@@ -70,5 +70,13 @@
       <HintPath>C:\SteamLibrary\steamapps\common\Vampire Crawlers\BepInEx\interop\Pancake.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Unity.Localization">
+      <HintPath>C:\SteamLibrary\steamapps\common\Vampire Crawlers\BepInEx\interop\Unity.Localization.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="copy /Y &quot;$(OutputPath)$(AssemblyName).dll&quot; &quot;C:\SteamLibrary\steamapps\common\Vampire Crawlers\BepInEx\plugins\BetterCards.dll&quot;" />
+  </Target>
 </Project>

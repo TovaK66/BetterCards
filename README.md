@@ -1,6 +1,12 @@
 # BetterCards — Vampire Crawlers mod
 
-A BepInEx mod for **Vampire Crawlers** that adds two visual badges to the level-up card selection screen:
+A BepInEx mod for **Vampire Crawlers** that enhances the card UI with useful information at a glance.
+
+---
+
+## Features
+
+### Level-up card selection — badges
 
 - **EVO** (gold medallion, top-right) — appears on a card when picking it would complete an evolution combo with your current deck
 - **NEW** (rainbow pill, top-left) — appears when you own zero copies of that card
@@ -8,12 +14,33 @@ A BepInEx mod for **Vampire Crawlers** that adds two visual badges to the level-
 
 No more guessing whether a card completes a combo or whether you've seen it before.
 
+### Deck viewer — COMPOSITION panel
+
+When you open the **draw pile or discard pile** modal during combat, a **COMPOSITION** panel appears showing the mana cost distribution of your full deck (draw pile + hand + discard pile combined).
+
+Each mana cost is shown as a colored orb with a count badge. The panel adapts to your deck size:
+
+- **Small deck (≤10 cards visible)** — panel appears horizontally below the card list
+- **Large deck (11+ cards)** — panel moves to the right side of the modal as a vertical list
+
+Companion cards are excluded from the count.
+
 ---
 
 ## Screenshots
 
-![Screenshot 1](screenshots/screenshot1.jpg)
-![Screenshot 2](screenshots/screenshot2.jpg)
+### Level-up badges (EVO / NEW / ×N)
+
+![Level-up badges](screenshots/screenshot1.jpg)
+![Level-up badges 2](screenshots/screenshot2.jpg)
+
+### COMPOSITION panel — horizontal (small deck)
+
+![COMPOSITION panel horizontal](screenshots/composition_horizontal.jpg)
+
+### COMPOSITION panel — vertical (large deck)
+
+![COMPOSITION panel vertical](screenshots/composition_vertical.jpg)
 
 ---
 
