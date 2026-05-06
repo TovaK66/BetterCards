@@ -18,7 +18,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.2.1")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.2.2")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -400,8 +400,11 @@ public class ComboObserver : MonoBehaviour
         }
     }
 
-    // Clé spéciale pour les cartes Wild ("W") dans le dictionnaire de coûts
+    // Clés spéciales pour les coûts non-numériques dans le dictionnaire :
+    // - WILD_KEY ("W") : carte joker, coût universel
+    // - XMANA_KEY ("X") : gemme X Mana, coût variable (= mana restant au moment du jeu)
     const int WILD_KEY = -99;
+    const int XMANA_KEY = -98;
 
     void OnDeckBoxOpened(DeckBoxModal modal, string reason = "")
     {
@@ -487,14 +490,15 @@ public class ComboObserver : MonoBehaviour
                     cost = WILD_KEY;
                 else
                 {
-                    // Source la plus fiable : _costText du CardView (texte exact affiché à l'écran)
+                    // Source la plus fiable : _costText du CardView (texte exact affiché).
+                    // Reconnaît "0".."9" / "W"/"U" / "X" ; tout autre texte (placeholder pour
+                    // cartes hors main par ex.) tombe sur les fallbacks numériques.
                     if (csvView != null)
                     {
                         try
                         {
                             var ct = csvView._costText;
-                            if (ct != null && int.TryParse(ct.text.Trim(), out int dispCost))
-                                cost = dispCost;
+                            if (ct != null) TryParseCostText(ct.text, out cost);
                         }
                         catch { }
                     }
@@ -506,6 +510,7 @@ public class ComboObserver : MonoBehaviour
                     if (cost == -999 && csvCfg != null)
                         cost = csvCfg.manaCost;
                     if (cost == -999) continue;
+                    if (cost == WILD_KEY && csvCm != null) TryCacheWildSpriteFromModel(csvCm);
                 }
 
                 // Cacher l'orbe du coût correspondant
@@ -571,12 +576,11 @@ public class ComboObserver : MonoBehaviour
                     }
                     else
                     {
-                        // _costText.text = coût exact affiché ; sinon GetCardCostTypeManaCost ; sinon base
+                        // Idem CC : "W"/"U" → wild, "X" → X Mana, numérique → cost, sinon fallback.
                         try
                         {
                             var ct = cm.CardView?._costText;
-                            if (ct != null && int.TryParse(ct.text.Trim(), out int dispC))
-                                cost = dispC;
+                            if (ct != null) TryParseCostText(ct.text, out cost);
                         }
                         catch { }
                         if (cost == -999)
@@ -585,7 +589,8 @@ public class ComboObserver : MonoBehaviour
                             catch { cost = -999; }
                         }
                         if (cost == -999) cost = cfg.manaCost;
-                        TryCacheOrbSpriteFromModel(cm, cost);
+                        if (cost == WILD_KEY) TryCacheWildSpriteFromModel(cm);
+                        else if (cost != XMANA_KEY) TryCacheOrbSpriteFromModel(cm, cost);
                     }
                     costGroups[cost] = costGroups.TryGetValue(cost, out var cnt) ? cnt + 1 : 1;
                 }
@@ -651,6 +656,23 @@ public class ComboObserver : MonoBehaviour
             }
         }
         catch { }
+    }
+
+    // Parse un texte de coût affiché. Renvoie true si on a une interprétation non-ambiguë.
+    // Cas : "0".."9" → cost numérique ; "W"/"U" → wild ; "X" → X Mana variable.
+    // Tout autre texte (vide, "?", placeholder pour cartes hors main) → false → fallback amont.
+    static bool TryParseCostText(string txt, out int cost)
+    {
+        cost = -999;
+        if (string.IsNullOrEmpty(txt)) return false;
+        txt = txt.Trim();
+        if (int.TryParse(txt, out int n)) { cost = n; return true; }
+        if (txt.Equals("W", System.StringComparison.OrdinalIgnoreCase)
+            || txt.Equals("U", System.StringComparison.OrdinalIgnoreCase))
+        { cost = WILD_KEY; return true; }
+        if (txt.Equals("X", System.StringComparison.OrdinalIgnoreCase))
+        { cost = XMANA_KEY; return true; }
+        return false;
     }
 
     // Recherche récursive d'un Image sliced dont le sprite commence par "frame".
@@ -755,7 +777,11 @@ public class ComboObserver : MonoBehaviour
         rt.anchoredPosition = new Vector2(xOffset, yOffset);
 
         // Wild (WILD_KEY=-99) trié en premier
-        var sorted = costGroups.OrderBy(kv => kv.Key == WILD_KEY ? int.MinValue : kv.Key).ToList();
+        // Tri : Wild d'abord, puis X Mana, puis coûts numériques croissants.
+        var sorted = costGroups.OrderBy(kv =>
+            kv.Key == WILD_KEY ? int.MinValue :
+            kv.Key == XMANA_KEY ? int.MinValue + 1 :
+            kv.Key).ToList();
         bool allData = sorted.Count > 0;
 
         if (allData && vertical)
@@ -806,7 +832,7 @@ public class ComboObserver : MonoBehaviour
                     else if (_manaOrbSprites.Count > 0) { bI.sprite = _manaOrbSprites.First().Value; bI.color = _manaOrbColors.Count > 0 ? _manaOrbColors.First().Value : Color.white; }
                     var nGo = new GameObject("Num"); nGo.transform.SetParent(bGo.transform, false);
                     var nR = nGo.AddComponent<RectTransform>(); nR.anchorMin = Vector2.zero; nR.anchorMax = Vector2.one; nR.offsetMin = nR.offsetMax = Vector2.zero;
-                    var nT = nGo.AddComponent<TextMeshProUGUI>(); nT.text = kv.Key == WILD_KEY ? "W" : kv.Key.ToString(); nT.fontSize = 60f; nT.fontStyle = FontStyles.Bold; nT.alignment = TextAlignmentOptions.Center; nT.color = Color.white; nT.enableWordWrapping = false; nT.overflowMode = TextOverflowModes.Overflow; nT.margin = Vector4.zero;
+                    var nT = nGo.AddComponent<TextMeshProUGUI>(); nT.text = kv.Key == WILD_KEY ? "W" : kv.Key == XMANA_KEY ? "X" : kv.Key.ToString(); nT.fontSize = 60f; nT.fontStyle = FontStyles.Bold; nT.alignment = TextAlignmentOptions.Center; nT.color = Color.white; nT.enableWordWrapping = false; nT.overflowMode = TextOverflowModes.Overflow; nT.margin = Vector4.zero;
                 }
                 var cGo = new GameObject("Cnt"); cGo.transform.SetParent(panel.transform, false);
                 var cR = cGo.AddComponent<RectTransform>(); cR.anchorMin = cR.anchorMax = new Vector2(0.5f,0.5f); cR.pivot = new Vector2(0f,0.5f); cR.anchoredPosition = new Vector2(cX, rowY); cR.sizeDelta = new Vector2(cW, rH);
@@ -953,7 +979,7 @@ public class ComboObserver : MonoBehaviour
                     nrt.anchorMin = Vector2.zero; nrt.anchorMax = Vector2.one;
                     nrt.offsetMin = nrt.offsetMax = Vector2.zero;
                     var ntmp = numGo.AddComponent<TextMeshProUGUI>();
-                    ntmp.text = kv.Key == WILD_KEY ? "W" : kv.Key.ToString();
+                    ntmp.text = kv.Key == WILD_KEY ? "W" : kv.Key == XMANA_KEY ? "X" : kv.Key.ToString();
                     ntmp.fontSize = 56f;
                     ntmp.fontStyle = FontStyles.Bold;
                     ntmp.alignment = TextAlignmentOptions.Center;
@@ -1076,14 +1102,28 @@ public class ComboObserver : MonoBehaviour
                     if (cfg == null || cfg.name == null || !cfg.name.StartsWith("Card_")) continue;
                     var np2 = cfg.name.Split('_');
                     bool isWild2 = np2.Length == 3 || (np2.Length >= 2 && np2[1].ToUpperInvariant() == "E");
-                    int gemMod2 = 0;
-                    try {
-                        var gmods2 = cm.CardGems?._gemManaModifiers;
-                        if (gmods2 != null) foreach (var kvp in gmods2) gemMod2 += kvp.Value.Count * kvp.Value.Amount;
-                    } catch { }
-                    int cost = isWild2 ? WILD_KEY : cfg.manaCost + gemMod2;
-                    if (isWild2) TryCacheWildSpriteFromModel(cm);
-                    else TryCacheOrbSpriteFromModel(cm, cost);
+                    int cost = -999;
+                    if (isWild2) cost = WILD_KEY;
+                    else
+                    {
+                        try
+                        {
+                            var ct = cm.CardView?._costText;
+                            if (ct != null) TryParseCostText(ct.text, out cost);
+                        }
+                        catch { }
+                        if (cost == -999)
+                        {
+                            int gemMod2 = 0;
+                            try {
+                                var gmods2 = cm.CardGems?._gemManaModifiers;
+                                if (gmods2 != null) foreach (var kvp in gmods2) gemMod2 += kvp.Value.Count * kvp.Value.Amount;
+                            } catch { }
+                            cost = cfg.manaCost + gemMod2;
+                        }
+                    }
+                    if (cost == WILD_KEY) TryCacheWildSpriteFromModel(cm);
+                    else if (cost != XMANA_KEY) TryCacheOrbSpriteFromModel(cm, cost);
                     manaCosts[cost] = manaCosts.TryGetValue(cost, out var cnt) ? cnt + 1 : 1;
                 }
                 if (manaCosts.Count > 0)
