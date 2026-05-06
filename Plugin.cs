@@ -18,7 +18,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.1.0")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.1.1")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -701,7 +701,7 @@ public class ComboObserver : MonoBehaviour
                     else if (_manaOrbSprites.Count > 0) { bI.sprite = _manaOrbSprites.First().Value; bI.color = _manaOrbColors.Count > 0 ? _manaOrbColors.First().Value : Color.white; }
                     var nGo = new GameObject("Num"); nGo.transform.SetParent(bGo.transform, false);
                     var nR = nGo.AddComponent<RectTransform>(); nR.anchorMin = Vector2.zero; nR.anchorMax = Vector2.one; nR.offsetMin = nR.offsetMax = Vector2.zero;
-                    var nT = nGo.AddComponent<TextMeshProUGUI>(); nT.text = kv.Key.ToString(); nT.fontSize = 60f; nT.fontStyle = FontStyles.Bold; nT.alignment = TextAlignmentOptions.Center; nT.color = Color.white; nT.enableWordWrapping = false; nT.overflowMode = TextOverflowModes.Overflow; nT.margin = Vector4.zero;
+                    var nT = nGo.AddComponent<TextMeshProUGUI>(); nT.text = kv.Key == WILD_KEY ? "W" : kv.Key.ToString(); nT.fontSize = 60f; nT.fontStyle = FontStyles.Bold; nT.alignment = TextAlignmentOptions.Center; nT.color = Color.white; nT.enableWordWrapping = false; nT.overflowMode = TextOverflowModes.Overflow; nT.margin = Vector4.zero;
                 }
                 var cGo = new GameObject("Cnt"); cGo.transform.SetParent(panel.transform, false);
                 var cR = cGo.AddComponent<RectTransform>(); cR.anchorMin = cR.anchorMax = new Vector2(0.5f,0.5f); cR.pivot = new Vector2(0f,0.5f); cR.anchoredPosition = new Vector2(cX, rowY); cR.sizeDelta = new Vector2(cW, rH);
@@ -791,7 +791,7 @@ public class ComboObserver : MonoBehaviour
                 brt.anchoredPosition = new Vector2(x, badgeY);
                 brt.sizeDelta = new Vector2(badgeSz, badgeSz);
 
-                if (kv.Key == WILD_KEY)
+                if (kv.Key == WILD_KEY && _manaOrbSprites.ContainsKey(WILD_KEY))
                 {
                     // Couche 0 : liseré gris foncé (même sprite légèrement plus grand, rendu en dessous)
                     var shadowGo = new GameObject("WildShadow");
@@ -848,7 +848,7 @@ public class ComboObserver : MonoBehaviour
                     nrt.anchorMin = Vector2.zero; nrt.anchorMax = Vector2.one;
                     nrt.offsetMin = nrt.offsetMax = Vector2.zero;
                     var ntmp = numGo.AddComponent<TextMeshProUGUI>();
-                    ntmp.text = kv.Key.ToString();
+                    ntmp.text = kv.Key == WILD_KEY ? "W" : kv.Key.ToString();
                     ntmp.fontSize = 56f;
                     ntmp.fontStyle = FontStyles.Bold;
                     ntmp.alignment = TextAlignmentOptions.Center;
