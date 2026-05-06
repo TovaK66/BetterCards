@@ -18,7 +18,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.2.0")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.2.1")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -420,6 +420,18 @@ public class ComboObserver : MonoBehaviour
             var cardContainer = FindNamedChild(modal.gameObject.transform, "CardContainer", 10);
             if (cardContainer == null) { Plugin.Log.LogWarning("[DeckBox] CardContainer null"); return; }
 
+            // Cadre doré : la modale DeckBox a son propre [frame] sliced (ex frame1_c4) toujours
+            // présent dans la hiérarchie, indépendamment de l'état des cartes. On le récupère ici
+            // si pas encore caché correctement (le sprite peut avoir été pollué par un fallback
+            // sur des cartes en main qui exposent UI_sprites_52, qui n'est pas un cadre).
+            bool frameOk = _modalFrameSprite != null
+                && (_modalFrameSprite.name?.StartsWith("frame", System.StringComparison.OrdinalIgnoreCase) ?? false);
+            if (!frameOk)
+            {
+                var modalFrame = FindFrameSpriteRecursive(modal.gameObject.transform, 15);
+                if (modalFrame != null) _modalFrameSprite = modalFrame;
+            }
+
             var fallbackGroups = new Dictionary<int, int>();
 
             for (int ci = 0; ci < cardContainer.childCount; ci++)
@@ -573,6 +585,7 @@ public class ComboObserver : MonoBehaviour
                             catch { cost = -999; }
                         }
                         if (cost == -999) cost = cfg.manaCost;
+                        TryCacheOrbSpriteFromModel(cm, cost);
                     }
                     costGroups[cost] = costGroups.TryGetValue(cost, out var cnt) ? cnt + 1 : 1;
                 }
@@ -615,6 +628,50 @@ public class ComboObserver : MonoBehaviour
             }
         }
         catch { }
+    }
+
+    // Idem pour les coûts non-wild : si la modale DeckBox s'ouvre avec une pile vide
+    // (toutes les cartes en main au début d'un combat), CardContainer ne fournit aucun
+    // sprite à cacher → on retombe sur les CardViews de la main.
+    static void TryCacheOrbSpriteFromModel(CardModel cm, int cost)
+    {
+        if (cm == null || _manaOrbSprites.ContainsKey(cost)) return;
+        try
+        {
+            var cv = cm.CardView;
+            if (cv == null) return;
+            var t = cv.gameObject?.transform;
+            if (t == null) return;
+            var orbT = FindNamedChild(t, "_manaComboElementOrb", 15);
+            var orbImg = orbT?.GetComponent<Image>();
+            if (orbImg?.sprite != null)
+            {
+                _manaOrbSprites[cost] = orbImg.sprite;
+                _manaOrbColors[cost] = orbImg.color;
+            }
+        }
+        catch { }
+    }
+
+    // Recherche récursive d'un Image sliced dont le sprite commence par "frame".
+    // Utilisé pour trouver le cadre doré de la modale DeckBox quand le CardContainer
+    // est vide (deck en main → pas de carte à inspecter pour récupérer la sprite).
+    static Sprite FindFrameSpriteRecursive(Transform t, int maxDepth)
+    {
+        if (maxDepth <= 0) return null;
+        var img = t.GetComponent<Image>();
+        if (img != null && img.type == Image.Type.Sliced && img.sprite != null)
+        {
+            var n = img.sprite.name ?? "";
+            if (n.StartsWith("frame", System.StringComparison.OrdinalIgnoreCase))
+                return img.sprite;
+        }
+        for (int i = 0; i < t.childCount; i++)
+        {
+            var f = FindFrameSpriteRecursive(t.GetChild(i), maxDepth - 1);
+            if (f != null) return f;
+        }
+        return null;
     }
 
     static Transform FindNamedChild(Transform t, string name, int maxDepth = 5)
@@ -1026,6 +1083,7 @@ public class ComboObserver : MonoBehaviour
                     } catch { }
                     int cost = isWild2 ? WILD_KEY : cfg.manaCost + gemMod2;
                     if (isWild2) TryCacheWildSpriteFromModel(cm);
+                    else TryCacheOrbSpriteFromModel(cm, cost);
                     manaCosts[cost] = manaCosts.TryGetValue(cost, out var cnt) ? cnt + 1 : 1;
                 }
                 if (manaCosts.Count > 0)

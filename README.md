@@ -34,6 +34,10 @@ Companion cards are excluded from the count.
 
 ![EVO and NEW badges](screenshots/EVO_NEW_badge.jpg)
 
+### EVO bis badge (combo already covered by deck)
+
+![EVO bis badge](screenshots/EVO_bis_badge.jpg)
+
 ### ×N badge (owned card count)
 
 ![×N badge](screenshots/xN_badge.jpg)
