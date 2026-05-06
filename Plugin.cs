@@ -18,7 +18,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.1.2")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.2.0")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -116,6 +116,27 @@ public class ComboObserver : MonoBehaviour
 
     public void Update()
     {
+        // Animation des badges EVO arc-en-ciel : rotation lente du ring (couleurs qui défilent),
+        // balayage rapide du shine (reflet qui orbite). Time.unscaledTime pour rester actif
+        // même quand timeScale=0 (le level-up met le jeu en pause).
+        if (_animBadges.Count > 0)
+        {
+            float t = Time.unscaledTime;
+            float ringAngle = (t * 35f) % 360f;
+            float shineAngle = (t * -120f) % 360f;
+            for (int i = _animBadges.Count - 1; i >= 0; i--)
+            {
+                var ab = _animBadges[i];
+                if (ab == null || ab.ring == null) { _animBadges.RemoveAt(i); continue; }
+                try
+                {
+                    ab.ring.localEulerAngles = new Vector3(0f, 0f, ringAngle);
+                    if (ab.shine != null) ab.shine.localEulerAngles = new Vector3(0f, 0f, shineAngle);
+                }
+                catch { _animBadges.RemoveAt(i); }
+            }
+        }
+
         if (_cachedModal == null)
         {
             if (--_searchCooldown > 0) return;
@@ -937,11 +958,6 @@ public class ComboObserver : MonoBehaviour
             var views = modal._cardChoiceViews;
             if (views == null) return;
 
-            var offeredNames = new HashSet<string>();
-            foreach (var view in views)
-                if (view?.CardConfig?.name != null) offeredNames.Add(view.CardConfig.name);
-
-            var ownedNormNames = new HashSet<string>();
             var countByBase = new Dictionary<string, int>();
             var ownedConfigs = new List<CardConfig>();
             var allCards = playerModel._allCards;
@@ -953,10 +969,13 @@ public class ComboObserver : MonoBehaviour
                     if (cfg.name != null)
                     {
                         var bn = GetBaseKey(cfg.name);
-                        ownedNormNames.Add(bn);
                         countByBase[bn] = countByBase.TryGetValue(bn, out var cnt) ? cnt + 1 : 1;
                     }
-                    if (!offeredNames.Contains(cfg.name)) ownedConfigs.Add(cfg);
+                    // Inclure toutes les cartes du deck, y compris celles actuellement offertes :
+                    // c'est nécessaire pour détecter la redondance quand le joueur possède déjà
+                    // un duplicata de la carte offerte. La logique anyFromDeck de CheckCombo est
+                    // robuste à ça via le filtre !CardMatchesComp(offered, c).
+                    ownedConfigs.Add(cfg);
                 }
 
             TryCacheManaIcons(views);
@@ -979,11 +998,13 @@ public class ComboObserver : MonoBehaviour
                 int owned = bn2.Length > 0 && countByBase.TryGetValue(bn2, out var oc) ? oc : 0;
                 AddCountBadge(view.gameObject, owned);
 
-                if (cfg.name == null || ownedNormNames.Contains(bn2)) continue;
-                var (hasCombo, evoName, _) = CheckCombo(cfg, ownedConfigs);
+                if (cfg.name == null) continue;
+                // Note : on ne skippe PAS les cartes déjà possédées. CheckCombo doit pouvoir
+                // détecter la redondance même sur un duplicata offert (combo déjà couvert).
+                var (hasCombo, evoName, isRedundant) = CheckCombo(cfg, ownedConfigs);
                 if (hasCombo)
                 {
-                    AddBadge(view.gameObject, evoName);
+                    AddBadge(view.gameObject, evoName, isRedundant);
                 }
             }
 
@@ -1066,7 +1087,9 @@ public class ComboObserver : MonoBehaviour
         return false;
     }
 
-    static (bool, string, Sprite) CheckCombo(CardConfig offered, List<CardConfig> ownedConfigs)
+    // Retourne (hasCombo, evoName, isRedundant). isRedundant = true si tous les composants
+    // sont déjà dans le deck sans avoir besoin de piocher la carte offerte (combo couvert).
+    static (bool hasCombo, string evoName, bool isRedundant) CheckCombo(CardConfig offered, List<CardConfig> ownedConfigs)
     {
         // Case 1 : la carte offerte peut évoluer si le joueur possède tous les autres composants
         if (offered.HasEvolution)
@@ -1081,8 +1104,9 @@ public class ComboObserver : MonoBehaviour
                     !CardMatchesComp(offered, Norm(c)) && OwnsComp(c, ownedConfigs));
                 if (allSatisfied && anyFromDeck)
                 {
+                    bool allInDeck = comps.All(c => OwnsComp(c, ownedConfigs));
                     var evolved = offered.EvolvedCardConfig;
-                    return (true, evolved?.Name ?? "?", FirstSprite(evolved));
+                    return (true, evolved?.Name ?? "?", allInDeck);
                 }
             }
         }
@@ -1110,35 +1134,34 @@ public class ComboObserver : MonoBehaviour
 
             if (allOtherOwned)
             {
+                bool allInDeck = comps.All(c => OwnsComp(c, ownedConfigs));
                 var evolved = owned.EvolvedCardConfig;
-                return (true, evolved?.Name ?? "?", FirstSprite(evolved));
+                return (true, evolved?.Name ?? "?", allInDeck);
             }
         }
 
-        return (false, "", null);
-    }
-
-    static Sprite FirstSprite(CardConfig cfg)
-    {
-        if (cfg == null) return null;
-        var arr = cfg.sprites;
-        if (arr == null || arr.Length == 0) return null;
-        return arr[0];
+        return (false, "", false);
     }
 
     const string BadgeName = "VCComboBadge";
-    static Sprite _badgeSprite;
+    static Sprite _ringSpriteRainbow;
+    static Sprite _ringSpriteSilver;
+    static Sprite _evoTextSprite;
+    static Sprite _shineSprite;
+    static Sprite _checkmarkSprite;
 
-    static Sprite GetBadgeSprite()
+    // Ring + glow + intérieur sombre, sans le texte EVO. Tournable indépendamment.
+    static Sprite GetBadgeRingSprite(bool silver = false)
     {
-        if (_badgeSprite != null) return _badgeSprite;
+        if (silver && _ringSpriteSilver != null) return _ringSpriteSilver;
+        if (!silver && _ringSpriteRainbow != null) return _ringSpriteRainbow;
+
         const int sz = 64;
         var tex = new Texture2D(sz, sz, TextureFormat.RGBA32, false);
         tex.filterMode = FilterMode.Bilinear;
         float cx = sz / 2f, cy = sz / 2f;
         var pixels = new Color[sz * sz];
 
-        // Background circle + gold ring with "liseré brillant"
         for (int y = 0; y < sz; y++)
         for (int x = 0; x < sz; x++)
         {
@@ -1149,75 +1172,89 @@ public class ComboObserver : MonoBehaviour
             if (dist < 32f)
             {
                 float angle = Mathf.Atan2(dy, dx);
-                // Directional light: top-left appears brighter (classic metallic sheen)
                 float dirLight = (Mathf.Cos(angle + Mathf.PI * 0.3f) + 1f) * 0.5f;
 
-                if (dist >= 29f) // outer ambient glow
+                if (dist >= 29f)
                 {
                     float t = 1f - (dist - 29f) / 3f;
-                    col = new Color(0.6f, 0.18f, 0f, t * t * 0.55f);
+                    col = silver
+                        ? new Color(0.40f, 0.45f, 0.55f, t * t * 0.55f)
+                        : new Color(0.55f, 0.30f, 0.70f, t * t * 0.55f);
                 }
-                else if (dist >= 19.5f) // gold ring with concentric "liseré" bands
+                else if (dist >= 19.5f)
                 {
-                    float ringPos = (dist - 19.5f) / 9.5f; // 0=inner edge, 1=outer edge
-                    // Concentric stripes create the engraved-metal look
+                    float ringPos = (dist - 19.5f) / 9.5f;
                     float band = (Mathf.Sin(ringPos * Mathf.PI * 3.5f - 0.3f) + 1f) * 0.5f;
-                    // Brighter at inner and outer edges
                     float edgeBoost = Mathf.Pow(Mathf.Abs(ringPos * 2f - 1f), 1.5f);
                     float brightness = band * 0.32f + dirLight * 0.33f + edgeBoost * 0.28f + 0.07f;
                     brightness = Mathf.Clamp01(brightness);
-                    col = new Color(
-                        Mathf.Lerp(0.48f, 1.0f, brightness),
-                        Mathf.Lerp(0.20f, 0.84f, brightness),
-                        0f, 1f
-                    );
+
+                    if (silver)
+                    {
+                        col = new Color(
+                            Mathf.Lerp(0.42f, 0.96f, brightness),
+                            Mathf.Lerp(0.46f, 0.98f, brightness),
+                            Mathf.Lerp(0.55f, 1.00f, brightness),
+                            1f);
+                    }
+                    else
+                    {
+                        // Hue cyclée par l'angle : la rotation du sprite fait défiler les couleurs.
+                        float hue = ((angle + Mathf.PI) / (2f * Mathf.PI)) % 1f;
+                        Color hsv = Color.HSVToRGB(hue, 0.92f, 1f);
+                        col = new Color(
+                            Mathf.Lerp(hsv.r * 0.30f, hsv.r, brightness),
+                            Mathf.Lerp(hsv.g * 0.30f, hsv.g, brightness),
+                            Mathf.Lerp(hsv.b * 0.30f, hsv.b, brightness),
+                            1f);
+                    }
                 }
-                else if (dist >= 17.5f) // inner shadow at ring/background border
+                else if (dist >= 17.5f)
                 {
                     float t = (dist - 17.5f) / 2f;
-                    col = new Color(0.08f, 0.03f, 0f, t * 0.9f);
+                    col = silver
+                        ? new Color(0.06f, 0.06f, 0.10f, t * 0.9f)
+                        : new Color(0.07f, 0.03f, 0.10f, t * 0.9f);
                 }
-                else // dark interior
+                else
                 {
-                    col = new Color(0.04f, 0.012f, 0f, 0.97f);
+                    col = silver
+                        ? new Color(0.05f, 0.05f, 0.08f, 0.97f)
+                        : new Color(0.05f, 0.03f, 0.08f, 0.97f);
                 }
             }
             pixels[y * sz + x] = col;
         }
 
-        // EVO pixel-art glyphs — 5×7, scale=3 → 15×21 per letter
-        // row[0] = top of letter; Y-flipped when drawing into texture
+        tex.SetPixels(pixels);
+        tex.Apply();
+        var sprite = Sprite.Create(tex, new Rect(0, 0, sz, sz), new Vector2(0.5f, 0.5f), 100f);
+        if (silver) _ringSpriteSilver = sprite; else _ringSpriteRainbow = sprite;
+        return sprite;
+    }
+
+    // Texte EVO blanc avec ombre, sur fond transparent. Statique, posé par-dessus le ring.
+    static Sprite GetEvoTextSprite()
+    {
+        if (_evoTextSprite != null) return _evoTextSprite;
+        const int sz = 64;
+        var tex = new Texture2D(sz, sz, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        var pixels = new Color[sz * sz];
+
         const int scale = 3, gw = 5, gh = 7;
         byte[][][] glyphs = {
-            // E
             new byte[][]{
-                new byte[]{1,1,1,1,1},
-                new byte[]{1,0,0,0,0},
-                new byte[]{1,0,0,0,0},
-                new byte[]{1,1,1,1,0},
-                new byte[]{1,0,0,0,0},
-                new byte[]{1,0,0,0,0},
-                new byte[]{1,1,1,1,1},
+                new byte[]{1,1,1,1,1}, new byte[]{1,0,0,0,0}, new byte[]{1,0,0,0,0},
+                new byte[]{1,1,1,1,0}, new byte[]{1,0,0,0,0}, new byte[]{1,0,0,0,0}, new byte[]{1,1,1,1,1},
             },
-            // V
             new byte[][]{
-                new byte[]{1,0,0,0,1},
-                new byte[]{1,0,0,0,1},
-                new byte[]{1,0,0,0,1},
-                new byte[]{1,0,0,0,1},
-                new byte[]{0,1,0,1,0},
-                new byte[]{0,1,0,1,0},
-                new byte[]{0,0,1,0,0},
+                new byte[]{1,0,0,0,1}, new byte[]{1,0,0,0,1}, new byte[]{1,0,0,0,1},
+                new byte[]{1,0,0,0,1}, new byte[]{0,1,0,1,0}, new byte[]{0,1,0,1,0}, new byte[]{0,0,1,0,0},
             },
-            // O
             new byte[][]{
-                new byte[]{0,1,1,1,0},
-                new byte[]{1,0,0,0,1},
-                new byte[]{1,0,0,0,1},
-                new byte[]{1,0,0,0,1},
-                new byte[]{1,0,0,0,1},
-                new byte[]{1,0,0,0,1},
-                new byte[]{0,1,1,1,0},
+                new byte[]{0,1,1,1,0}, new byte[]{1,0,0,0,1}, new byte[]{1,0,0,0,1},
+                new byte[]{1,0,0,0,1}, new byte[]{1,0,0,0,1}, new byte[]{1,0,0,0,1}, new byte[]{0,1,1,1,0},
             },
         };
 
@@ -1226,53 +1263,156 @@ public class ComboObserver : MonoBehaviour
         int xOff = (sz - totalW) / 2;
         int yOff = (sz - letterH) / 2;
 
-        // Shadow pass (offset 1px right, 1px down on screen = 1px lower Y in texture)
+        // Ombre noire (offset 1px)
         for (int g = 0; g < 3; g++)
         {
             int gxStart = xOff + g * (letterW + gap);
             for (int r = 0; r < gh; r++)
-            for (int col = 0; col < gw; col++)
-            if (glyphs[g][r][col] != 0)
+            for (int col2 = 0; col2 < gw; col2++)
+            if (glyphs[g][r][col2] != 0)
             for (int sy = 0; sy < scale; sy++)
             for (int sx = 0; sx < scale; sx++)
             {
-                int px = gxStart + col * scale + sx + 1;
+                int px = gxStart + col2 * scale + sx + 1;
                 int py = yOff + (gh - 1 - r) * scale + sy - 1;
                 if (px >= 0 && px < sz && py >= 0 && py < sz)
-                    pixels[py * sz + px] = new Color(0f, 0f, 0f, 0.88f);
+                    pixels[py * sz + px] = new Color(0f, 0f, 0f, 0.92f);
             }
         }
 
-        // Color pass — gradient: red at bottom of letter, bright gold at top
+        // Texte blanc
         for (int g = 0; g < 3; g++)
         {
             int gxStart = xOff + g * (letterW + gap);
             for (int r = 0; r < gh; r++)
-            for (int col = 0; col < gw; col++)
-            if (glyphs[g][r][col] != 0)
+            for (int col2 = 0; col2 < gw; col2++)
+            if (glyphs[g][r][col2] != 0)
             for (int sy = 0; sy < scale; sy++)
             for (int sx = 0; sx < scale; sx++)
             {
-                int px = gxStart + col * scale + sx;
+                int px = gxStart + col2 * scale + sx;
                 int py = yOff + (gh - 1 - r) * scale + sy;
                 if (px >= 0 && px < sz && py >= 0 && py < sz)
-                {
-                    // py: low = screen-bottom (red), high = screen-top (gold)
-                    float gradT = (float)(py - yOff) / letterH;
-                    pixels[py * sz + px] = new Color(
-                        1f,
-                        Mathf.Lerp(0.08f, 0.90f, gradT),
-                        Mathf.Lerp(0f,    0.12f, gradT),
-                        1f
-                    );
-                }
+                    pixels[py * sz + px] = new Color(1f, 1f, 1f, 1f);
             }
         }
 
         tex.SetPixels(pixels);
         tex.Apply();
-        _badgeSprite = Sprite.Create(tex, new Rect(0, 0, sz, sz), new Vector2(0.5f, 0.5f), 100f);
-        return _badgeSprite;
+        _evoTextSprite = Sprite.Create(tex, new Rect(0, 0, sz, sz), new Vector2(0.5f, 0.5f), 100f);
+        return _evoTextSprite;
+    }
+
+    // Balayage de lumière : un arc clair concentré qui ne rend que sur la zone du ring.
+    // Posé en dernier sibling (par-dessus tout) et tourné rapidement = effet foil/holographique.
+    static Sprite GetShineSprite()
+    {
+        if (_shineSprite != null) return _shineSprite;
+        const int sz = 64;
+        var tex = new Texture2D(sz, sz, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        float cx = sz / 2f, cy = sz / 2f;
+        var pixels = new Color[sz * sz];
+
+        for (int y = 0; y < sz; y++)
+        for (int x = 0; x < sz; x++)
+        {
+            float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+            float dist = Mathf.Sqrt(dx * dx + dy * dy);
+            Color col = Color.clear;
+
+            if (dist >= 18.5f && dist <= 30.5f)
+            {
+                float angle = Mathf.Atan2(dy, dx);
+                // Lobe étroit centré sur le haut (angle = π/2)
+                float fromTop = angle - Mathf.PI / 2f;
+                while (fromTop > Mathf.PI) fromTop -= 2 * Mathf.PI;
+                while (fromTop < -Mathf.PI) fromTop += 2 * Mathf.PI;
+                float angleFalloff = Mathf.Cos(fromTop * 1.2f);
+                angleFalloff = Mathf.Clamp01(angleFalloff);
+                angleFalloff = Mathf.Pow(angleFalloff, 5f);
+
+                // Atténuation radiale : pic au milieu du ring, fondu vers les bords
+                float ringPos = (dist - 18.5f) / 12f;
+                float distFalloff = 1f - Mathf.Abs(ringPos * 2f - 1f);
+                distFalloff = Mathf.Pow(Mathf.Clamp01(distFalloff), 1.4f);
+
+                float intensity = angleFalloff * distFalloff;
+                col = new Color(1f, 1f, 1f, intensity * 0.85f);
+            }
+            pixels[y * sz + x] = col;
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _shineSprite = Sprite.Create(tex, new Rect(0, 0, sz, sz), new Vector2(0.5f, 0.5f), 100f);
+        return _shineSprite;
+    }
+
+    // Petite pastille verte avec un ✓ blanc, posée en surimpression sur le badge EVO bis.
+    static Sprite GetCheckmarkSprite()
+    {
+        if (_checkmarkSprite != null) return _checkmarkSprite;
+        const int sz = 32;
+        var tex = new Texture2D(sz, sz, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Bilinear;
+        var pixels = new Color[sz * sz];
+        float cx = sz / 2f, cy = sz / 2f, radius = 14f;
+
+        var greenLight = new Color(0.32f, 0.85f, 0.36f, 1f);
+        var greenDark  = new Color(0.10f, 0.50f, 0.18f, 1f);
+
+        // Disque vert avec léger éclairage directionnel + AA sur le bord
+        for (int y = 0; y < sz; y++)
+        for (int x = 0; x < sz; x++)
+        {
+            float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+            float dist = Mathf.Sqrt(dx * dx + dy * dy);
+            if (dist <= radius + 0.5f)
+            {
+                float angle = Mathf.Atan2(dy, dx);
+                float dirLight = (Mathf.Cos(angle + Mathf.PI * 0.3f) + 1f) * 0.5f;
+                float t = Mathf.Clamp01(dirLight * 0.55f + (1f - dist / radius) * 0.45f);
+                var col = Color.Lerp(greenDark, greenLight, t);
+                float aaEdge = Mathf.Clamp01(radius - dist + 0.5f);
+                pixels[y * sz + x] = new Color(col.r, col.g, col.b, aaEdge);
+            }
+        }
+
+        // ✓ blanc en pixel art (10×7, scale 2 = 20×14 réels)
+        byte[][] check = {
+            new byte[]{0,0,0,0,0,0,0,0,1,0},
+            new byte[]{0,0,0,0,0,0,0,1,1,0},
+            new byte[]{0,0,0,0,0,0,1,1,0,0},
+            new byte[]{1,0,0,0,0,1,1,0,0,0},
+            new byte[]{1,1,0,0,1,1,0,0,0,0},
+            new byte[]{0,1,1,1,1,0,0,0,0,0},
+            new byte[]{0,0,1,1,0,0,0,0,0,0},
+        };
+        const int chW = 10, chH = 7, scaleC = 2;
+        int xOff = (sz - chW * scaleC) / 2;
+        int yOff = (sz - chH * scaleC) / 2;
+
+        // Ombre + tracé blanc
+        for (int pass = 0; pass < 2; pass++)
+        for (int r = 0; r < chH; r++)
+        for (int c = 0; c < chW; c++)
+        if (check[r][c] != 0)
+        for (int sy = 0; sy < scaleC; sy++)
+        for (int sx = 0; sx < scaleC; sx++)
+        {
+            int px = xOff + c * scaleC + sx + (pass == 0 ? 1 : 0);
+            int py = yOff + (chH - 1 - r) * scaleC + sy - (pass == 0 ? 1 : 0);
+            if (px >= 0 && px < sz && py >= 0 && py < sz)
+                pixels[py * sz + px] = pass == 0
+                    ? new Color(0f, 0f, 0f, 0.55f)
+                    : new Color(1f, 1f, 1f, 1f);
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply();
+        _checkmarkSprite = Sprite.Create(tex, new Rect(0, 0, sz, sz), new Vector2(0.5f, 0.5f), 100f);
+        return _checkmarkSprite;
     }
 
     // ─── Count / NEW badge ────────────────────────────────────────────────────
@@ -1434,7 +1574,11 @@ public class ComboObserver : MonoBehaviour
 
     // ─── EVO badge ────────────────────────────────────────────────────────────
 
-    static void AddBadge(GameObject go, string evoName)
+    // Couches d'un badge EVO arc-en-ciel à animer (rotation indépendante du ring et du shine).
+    internal class AnimBadge { public Transform ring; public Transform shine; }
+    internal static readonly List<AnimBadge> _animBadges = new List<AnimBadge>();
+
+    static void AddBadge(GameObject go, string evoName, bool isRedundant = false)
     {
         var tween = GetTweenContainer(go);
         if (tween.Find(BadgeName) != null) return;
@@ -1444,10 +1588,59 @@ public class ComboObserver : MonoBehaviour
         badgeGo.transform.SetParent(tween, false);
         var badgeRT = badgeGo.AddComponent<RectTransform>();
         badgeRT.anchoredPosition = new Vector2(59f, -17.5f);
-        badgeRT.sizeDelta = new Vector2(48f, 48f);
+        // EVO bis (redondant) : médaillon plus petit pour signaler "info secondaire"
+        badgeRT.sizeDelta = isRedundant ? new Vector2(36f, 36f) : new Vector2(48f, 48f);
         badgeGo.transform.SetAsLastSibling();
 
-        var img = badgeGo.AddComponent<Image>();
-        img.sprite = GetBadgeSprite();
+        // Couche 1 : ring (rainbow ou silver) — tournable indépendamment du texte
+        var ringGo = new GameObject("Ring");
+        ringGo.layer = go.layer;
+        ringGo.transform.SetParent(badgeGo.transform, false);
+        var ringRT = ringGo.AddComponent<RectTransform>();
+        ringRT.anchorMin = Vector2.zero; ringRT.anchorMax = Vector2.one;
+        ringRT.offsetMin = ringRT.offsetMax = Vector2.zero;
+        ringGo.AddComponent<Image>().sprite = GetBadgeRingSprite(silver: isRedundant);
+
+        Transform shineRT = null;
+        if (!isRedundant)
+        {
+            // Couche 2 : balayage lumineux superposé (rainbow uniquement)
+            var shineGo = new GameObject("Shine");
+            shineGo.layer = go.layer;
+            shineGo.transform.SetParent(badgeGo.transform, false);
+            var shineRect = shineGo.AddComponent<RectTransform>();
+            shineRect.anchorMin = Vector2.zero; shineRect.anchorMax = Vector2.one;
+            shineRect.offsetMin = shineRect.offsetMax = Vector2.zero;
+            shineGo.AddComponent<Image>().sprite = GetShineSprite();
+            shineRT = shineGo.transform;
+        }
+
+        // Couche 3 : texte EVO blanc (statique, en haut)
+        var textGo = new GameObject("Text");
+        textGo.layer = go.layer;
+        textGo.transform.SetParent(badgeGo.transform, false);
+        var textRT = textGo.AddComponent<RectTransform>();
+        textRT.anchorMin = Vector2.zero; textRT.anchorMax = Vector2.one;
+        textRT.offsetMin = textRT.offsetMax = Vector2.zero;
+        textGo.AddComponent<Image>().sprite = GetEvoTextSprite();
+
+        if (isRedundant)
+        {
+            // Couche 4 (silver only) : pastille verte ✓ en haut-droit
+            var checkGo = new GameObject("Check");
+            checkGo.layer = go.layer;
+            checkGo.transform.SetParent(badgeGo.transform, false);
+            var checkRT = checkGo.AddComponent<RectTransform>();
+            checkRT.anchorMin = checkRT.anchorMax = new Vector2(1f, 1f);
+            checkRT.pivot = new Vector2(0.5f, 0.5f);
+            checkRT.anchoredPosition = new Vector2(2f, 2f);
+            checkRT.sizeDelta = new Vector2(18f, 18f);
+            checkGo.AddComponent<Image>().sprite = GetCheckmarkSprite();
+        }
+        else
+        {
+            // Inscription pour animation per-frame
+            _animBadges.Add(new AnimBadge { ring = ringGo.transform, shine = shineRT });
+        }
     }
 }
