@@ -18,7 +18,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.1.1")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.1.2")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -532,7 +532,10 @@ public class ComboObserver : MonoBehaviour
                     bool isWild = np.Length == 3 || (np.Length >= 2 && np[1].ToUpperInvariant() == "E");
                     int cost = -999;
                     if (isWild)
+                    {
                         cost = WILD_KEY;
+                        TryCacheWildSpriteFromModel(cm);
+                    }
                     else
                     {
                         // _costText.text = coût exact affiché ; sinon GetCardCostTypeManaCost ; sinon base
@@ -567,6 +570,30 @@ public class ComboObserver : MonoBehaviour
             _deckOverlayPending = true;
         }
         catch (Exception ex) { Plugin.Log.LogError($"[DeckBox] {ex}"); }
+    }
+
+    // Met en cache le sprite Wild depuis le CardView d'un CardModel si pas encore caché.
+    // Les cartes en main (rendues dans la scène) ont un CardView avec la bonne hiérarchie ;
+    // les cartes de pioche/défausse ne sont pas toujours rendues hors de la modale DeckBox.
+    static void TryCacheWildSpriteFromModel(CardModel cm)
+    {
+        if (cm == null || _manaOrbSprites.ContainsKey(WILD_KEY)) return;
+        try
+        {
+            var cv = cm.CardView;
+            if (cv == null) return;
+            var t = cv.gameObject?.transform;
+            if (t == null) return;
+            var orbT = FindNamedChild(t, "_W_cardCostBackgroundElement", 15)
+                    ?? FindNamedChild(t, "_manaComboElementOrb", 15);
+            var orbImg = orbT?.GetComponent<Image>();
+            if (orbImg?.sprite != null)
+            {
+                _manaOrbSprites[WILD_KEY] = orbImg.sprite;
+                _manaOrbColors[WILD_KEY] = orbImg.color;
+            }
+        }
+        catch { }
     }
 
     static Transform FindNamedChild(Transform t, string name, int maxDepth = 5)
@@ -977,6 +1004,7 @@ public class ComboObserver : MonoBehaviour
                         if (gmods2 != null) foreach (var kvp in gmods2) gemMod2 += kvp.Value.Count * kvp.Value.Amount;
                     } catch { }
                     int cost = isWild2 ? WILD_KEY : cfg.manaCost + gemMod2;
+                    if (isWild2) TryCacheWildSpriteFromModel(cm);
                     manaCosts[cost] = manaCosts.TryGetValue(cost, out var cnt) ? cnt + 1 : 1;
                 }
                 if (manaCosts.Count > 0)
