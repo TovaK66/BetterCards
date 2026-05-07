@@ -10,3 +10,6 @@ HANDOFF.md
 
 # Auto-generated VS solution files (not used for build)
 *.sln
+
+# Personal VS Code workspace (local paths, not for sharing)
+*.code-workspace
