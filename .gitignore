@@ -4,3 +4,9 @@ obj/
 *.user
 *.suo
 .idea/
+# Local Claude Code config (private, never commit)
+CLAUDE.local.md
+HANDOFF.md
+
+# Auto-generated VS solution files (not used for build)
+*.sln
