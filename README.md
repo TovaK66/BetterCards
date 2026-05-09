@@ -1,4 +1,4 @@
-# BetterCards — Vampire Crawlers mod
+# 🧛 BetterCards — Vampire Crawlers mod
 
 A BepInEx mod for **Vampire Crawlers** that enhances the card UI with useful information at a glance.
 
@@ -8,10 +8,10 @@ A BepInEx mod for **Vampire Crawlers** that enhances the card UI with useful inf
 
 ### ✨ Level-up card selection — badges
 
-- **EVO** (animated chromatic medallion, top-right) — appears on a card when picking it would complete an evolution combo your deck doesn't yet have. The rainbow ring rotates and a light streak sweeps across it for a holographic foil effect.
-- **EVO bis** (smaller silver medallion with a green ✓, top-right) — appears when the offered card *would* complete a combo, but the combo is **already covered** by your current deck. Picking is redundant for that combo (still useful info if you want a duplicate, evolved tier, etc.).
-- **NEW** (rainbow pill, top-left) — appears when you own zero copies of that card
-- **×N** (gold pill, top-left) — shows how many copies of that card you already own
+- 🥇 **EVO** (animated chromatic medallion, top-right) — appears on a card when picking it would complete an evolution combo your deck doesn't yet have. The rainbow ring rotates and a light streak sweeps across it for a holographic foil effect.
+- 🥈 **EVO bis** (smaller silver medallion with a green ✓, top-right) — appears when the offered card *would* complete a combo, but the combo is **already covered** by your current deck. Picking is redundant for that combo (still useful info if you want a duplicate, evolved tier, etc.).
+- 🌈 **NEW** (rainbow pill, top-left) — appears when you own zero copies of that card
+- 🔢 **×N** (gold pill, top-left) — shows how many copies of that card you already own
 
 No more guessing whether a card completes a combo or whether you've seen it before.
 
