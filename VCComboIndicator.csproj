@@ -10,6 +10,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="assets\padlock.rgba" />
+    <EmbeddedResource Include="assets\lock.wav" />
+    <EmbeddedResource Include="assets\unlock.wav" />
+    <EmbeddedResource Include="assets\blocked.wav" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="BepInEx.Core">
       <HintPath>C:\SteamLibrary\steamapps\common\Vampire Crawlers\BepInEx\core\BepInEx.Core.dll</HintPath>
       <Private>false</Private>
@@ -56,6 +63,14 @@
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>C:\SteamLibrary\steamapps\common\Vampire Crawlers\BepInEx\interop\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>C:\SteamLibrary\steamapps\common\Vampire Crawlers\BepInEx\interop\UnityEngine.AudioModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>C:\SteamLibrary\steamapps\common\Vampire Crawlers\BepInEx\interop\UnityEngine.ImageConversionModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
