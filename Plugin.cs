@@ -25,7 +25,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.0")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.1")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -1373,26 +1373,204 @@ public class ComboObserver : MonoBehaviour
         return false;
     }
 
+    // Index global de tous les noms de cartes connus (normalisés). Utilisé pour
+    // détecter les composants "orphelins" : un comp dont le nom ne correspond à
+    // AUCUNE carte de la DB du jeu (typo / mismatch interne, ex. "Tirimasu" dans
+    // la recette alors que la carte s'appelle "Tirajisu").
+    static HashSet<string> _allKnownNorms;
+    // Norms des noms de cartes qui sont RÉFÉRENCÉS comme composant d'au moins une recette
+    // d'évolution. Sert à filtrer les candidats orphelins : si une carte apparait comme
+    // comp dans une autre recette, elle a son propre rôle → ne pas l'utiliser pour combler
+    // un orphelin d'une recette différente.
+    static HashSet<string> _allCompRefs;
+
+    public static void InvalidateCardIndices()
+    {
+        _allKnownNorms = null;
+        _allCompRefs = null;
+    }
+
+    static void EnsureCardIndices()
+    {
+        if (_allKnownNorms != null && _allCompRefs != null) return;
+        var known = new HashSet<string>(StringComparer.Ordinal);
+        var refs = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            var arr = Resources.FindObjectsOfTypeAll<CardConfig>();
+            foreach (var c in arr)
+            {
+                if (c == null) continue;
+                if (!string.IsNullOrEmpty(c.name))
+                {
+                    var n1 = GetBaseName(c.name);
+                    if (n1.Length > 0) known.Add(n1);
+                }
+                try
+                {
+                    var disp = c.Name;
+                    if (!string.IsNullOrEmpty(disp))
+                    {
+                        var n2 = Norm(disp);
+                        if (n2.Length > 0) known.Add(n2);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    if (c.HasEvolution)
+                    {
+                        var d = c.GetEvolveRequirementDescription();
+                        if (!string.IsNullOrEmpty(d))
+                        {
+                            var comps = ParseComponents(d);
+                            foreach (var comp in comps)
+                            {
+                                var n = Norm(comp);
+                                if (n.Length > 0) refs.Add(n);
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex) { Plugin.Log.LogWarning($"[ComboIndicator] EnsureCardIndices: {ex.Message}"); }
+        _allKnownNorms = known;
+        _allCompRefs = refs;
+    }
+    static bool IsKnownCompName(string norm) => norm.Length > 0 && _allKnownNorms != null && _allKnownNorms.Contains(norm);
+    static bool IsCardReferencedAsComp(CardConfig c)
+    {
+        if (c == null || _allCompRefs == null) return false;
+        if (!string.IsNullOrEmpty(c.name))
+        {
+            var n1 = GetBaseName(c.name);
+            if (n1.Length > 0 && _allCompRefs.Contains(n1)) return true;
+        }
+        try
+        {
+            var disp = c.Name;
+            if (!string.IsNullOrEmpty(disp))
+            {
+                var n2 = Norm(disp);
+                if (n2.Length > 0 && _allCompRefs.Contains(n2)) return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    // Tente d'assigner chaque composant à une carte unique du pool.
+    // Pass 1 : matching texte greedy. Si un comp ne matche aucune carte du pool ET
+    //          qu'il est connu ailleurs dans la DB, c'est un échec définitif.
+    // Pass 2 : les comps "orphelins" (= nom inconnu, ex. "Tirimasu" qui n'existe
+    //          dans aucun asset/displayname) consomment chacun une carte non-utilisée
+    //          qui : (a) ne text-match aucun autre comp et (b) pointe vers la même
+    //          évolution cible (targetEvolved). Cette dernière condition est le vrai
+    //          garde-fou : sans elle n'importe quelle carte offerte serait acceptée
+    //          comme remplissant l'orphelin (faux positifs massifs).
+    // Au moins UN comp doit avoir été texte-matché en pass 1.
+    static HashSet<CardConfig> TryAssignComps(string[] comps, List<CardConfig> pool, CardConfig targetEvolved)
+    {
+        var used = new HashSet<CardConfig>();
+        var orphanIndices = new List<int>();
+        int textMatched = 0;
+        for (int i = 0; i < comps.Length; i++)
+        {
+            var n = Norm(comps[i]);
+            if (n.Length == 0) continue;
+            CardConfig found = null;
+            foreach (var c in pool)
+            {
+                if (c == null || used.Contains(c)) continue;
+                if (CardMatchesComp(c, n)) { found = c; break; }
+            }
+            if (found != null) { used.Add(found); textMatched++; continue; }
+            if (IsKnownCompName(n)) return null;
+            orphanIndices.Add(i);
+        }
+        if (orphanIndices.Count > 0 && textMatched == 0) return null;
+        if (orphanIndices.Count > 0 && targetEvolved == null) return null;
+        foreach (var idx in orphanIndices)
+        {
+            CardConfig found = null;
+            foreach (var c in pool)
+            {
+                if (c == null || used.Contains(c)) continue;
+                bool conflicts = false;
+                for (int i = 0; i < comps.Length; i++)
+                {
+                    var n = Norm(comps[i]);
+                    if (n.Length > 0 && CardMatchesComp(c, n)) { conflicts = true; break; }
+                }
+                if (conflicts) continue;
+                // Candidate valide pour orphelin si :
+                //  (a) elle pointe vers la même évolution cible (cas standard, ex. ingrédient
+                //      avec HasEvolution=true), OU
+                //  (b) elle n'a PAS HasEvolution ET n'est pas référencée comme comp ailleurs
+                //      (cas des ingrédients passifs "S" non-évoluables, ex. Tirajisu dont
+                //      le nom asset ne match aucune description — toutes utilisent "Tirimasu").
+                bool ok = false;
+                if (SameEvolutionTarget(c, targetEvolved)) ok = true;
+                else
+                {
+                    bool hasEvo = false;
+                    try { hasEvo = c.HasEvolution; } catch { }
+                    if (!hasEvo && !IsCardReferencedAsComp(c)) ok = true;
+                }
+                if (!ok) continue;
+                found = c; break;
+            }
+            if (found == null) return null;
+            used.Add(found);
+        }
+        return used;
+    }
+
+    // Retourne true si la carte 'c' pointe vers la même évolution finale que 'target'.
+    // Deux cartes "ingrédients" d'une même fusion ont leur EvolvedCardConfig qui pointe
+    // vers la même carte évoluée (ex. Phiera.EvolvedCardConfig == Eight.EvolvedCardConfig == Phieraggi).
+    static bool SameEvolutionTarget(CardConfig c, CardConfig target)
+    {
+        if (c == null || target == null) return false;
+        try
+        {
+            if (!c.HasEvolution) return false;
+            var ce = c.EvolvedCardConfig;
+            if (ce == null) return false;
+            if (ReferenceEquals(ce, target)) return true;
+            return ce.name == target.name;
+        }
+        catch { return false; }
+    }
+
     // Retourne (hasCombo, evoName, isRedundant). isRedundant = true si tous les composants
     // sont déjà dans le deck sans avoir besoin de piocher la carte offerte (combo couvert).
     static (bool hasCombo, string evoName, bool isRedundant) CheckCombo(CardConfig offered, List<CardConfig> ownedConfigs)
     {
+        EnsureCardIndices();
+
         // Case 1 : la carte offerte peut évoluer si le joueur possède tous les autres composants
         if (offered.HasEvolution)
         {
-            var comps = ParseComponents(offered.GetEvolveRequirementDescription());
+            var rawDesc = offered.GetEvolveRequirementDescription();
+            var comps = ParseComponents(rawDesc);
             if (comps.Length > 0)
             {
-                bool allSatisfied = comps.All(c =>
-                    CardMatchesComp(offered, Norm(c)) || OwnsComp(c, ownedConfigs));
-                // Au moins un composant doit venir du deck (évite les faux positifs sur description incomplète)
-                bool anyFromDeck = comps.Any(c =>
-                    !CardMatchesComp(offered, Norm(c)) && OwnsComp(c, ownedConfigs));
-                if (allSatisfied && anyFromDeck)
+                var pool = new List<CardConfig>(ownedConfigs);
+                if (!pool.Contains(offered)) pool.Add(offered);
+                var used = TryAssignComps(comps, pool, offered.EvolvedCardConfig);
+                if (used != null)
                 {
-                    bool allInDeck = comps.All(c => OwnsComp(c, ownedConfigs));
-                    var evolved = offered.EvolvedCardConfig;
-                    return (true, evolved?.Name ?? "?", allInDeck);
+                    bool anyFromDeck = used.Any(c => !ReferenceEquals(c, offered) && ownedConfigs.Contains(c));
+                    if (anyFromDeck)
+                    {
+                        bool allInDeck = used.All(c => ownedConfigs.Contains(c));
+                        var evolved = offered.EvolvedCardConfig;
+                        return (true, evolved?.Name ?? "?", allInDeck);
+                    }
                 }
             }
         }
@@ -1401,29 +1579,19 @@ public class ComboObserver : MonoBehaviour
         foreach (var owned in ownedConfigs)
         {
             if (owned == null || !owned.HasEvolution) continue;
-            var comps = ParseComponents(owned.GetEvolveRequirementDescription());
+            var rawDesc = owned.GetEvolveRequirementDescription();
+            var comps = ParseComponents(rawDesc);
             if (comps.Length == 0) continue;
 
-            bool offeredIsComp = comps.Any(c => {
-                var cn = Norm(c);
-                return cn.Length > 0 && CardMatchesComp(offered, cn);
-            });
-            if (!offeredIsComp) continue;
+            var pool = new List<CardConfig> { offered };
+            foreach (var c in ownedConfigs) pool.Add(c);
+            var used = TryAssignComps(comps, pool, owned.EvolvedCardConfig);
+            if (used == null) continue;
+            if (!used.Contains(offered)) continue;
 
-            // Tous les composants doivent être satisfaits par la carte offerte ou le deck
-            bool allOtherOwned = comps.All(c => {
-                var cn = Norm(c);
-                if (cn.Length == 0) return true;
-                if (CardMatchesComp(offered, cn)) return true;
-                return OwnsComp(c, ownedConfigs);
-            });
-
-            if (allOtherOwned)
-            {
-                bool allInDeck = comps.All(c => OwnsComp(c, ownedConfigs));
-                var evolved = owned.EvolvedCardConfig;
-                return (true, evolved?.Name ?? "?", allInDeck);
-            }
+            bool allInDeck = used.All(c => ownedConfigs.Contains(c));
+            var evolved = owned.EvolvedCardConfig;
+            return (true, evolved?.Name ?? "?", allInDeck);
         }
 
         return (false, "", false);
@@ -3047,3 +3215,4 @@ public class ComboObserver : MonoBehaviour
         }
     }
 }
+
