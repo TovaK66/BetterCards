@@ -25,7 +25,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.1")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.2")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -39,7 +39,7 @@ public class Plugin : BasePlugin
 
         CardLockEnabled = Config.Bind(
             "CardLock", "Enabled", true,
-            "Right-click any card to lock it (golden padlock). Locked cards can't be played accidentally — useful for keeping Destruction cards alive until fusion.");
+            "Right-click any card, press numpad '.', or press gamepad Select/Back to lock it (golden padlock). Locked cards can't be played accidentally — useful for keeping Destruction cards alive until fusion.");
 
         ClassInjector.RegisterTypeInIl2Cpp<ComboObserver>();
         var go = new GameObject("BetterCards");
@@ -2599,9 +2599,10 @@ public class ComboObserver : MonoBehaviour
         catch { }
     }
 
-    // Détecte le clic droit OU la touche pavé numérique "." (suppr) sur une
-    // carte en jeu (combat ou modal) et toggle son verrou. Approche Input +
-    // IsHovering : plus robuste qu'un patch Harmony sur PointerEvents.
+    // Détecte le clic droit, la touche pavé numérique "." (suppr), ou le
+    // bouton Select/Back manette sur une carte en jeu (combat ou modal) et
+    // toggle son verrou. Approche Input + IsHovering : plus robuste qu'un
+    // patch Harmony sur PointerEvents.
     void HandleRightClickToggle()
     {
         if (Plugin.CardLockEnabled == null || !Plugin.CardLockEnabled.Value) return;
@@ -2622,11 +2623,20 @@ public class ComboObserver : MonoBehaviour
             }
             catch { }
         }
+        if (!triggered)
+        {
+            try
+            {
+                var gp = Gamepad.current;
+                if (gp != null && gp.selectButton.wasPressedThisFrame) triggered = true;
+            }
+            catch { }
+        }
         if (!triggered) return;
         if (!_firstRightClickLogged)
         {
             _firstRightClickLogged = true;
-            Plugin.Log.LogInfo("[CardLock] premier toggle (clic droit ou numpad .) détecté");
+            Plugin.Log.LogInfo("[CardLock] premier toggle (clic droit, numpad . ou manette Select/Back) détecté");
         }
 
         // 1. Cartes en main (combat) : InteractableCard.IsHovering
