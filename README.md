@@ -15,17 +15,6 @@ A BepInEx mod for **Vampire Crawlers** that enhances the card UI with useful inf
 
 No more guessing whether a card completes a combo or whether you've seen it before.
 
-### 📊 Deck viewer — COMPOSITION panel
-
-When you open the **draw pile or discard pile** modal during combat, a **COMPOSITION** panel appears showing the mana cost distribution of your full deck (draw pile + hand + discard pile combined).
-
-Each mana cost is shown as a colored orb with a count badge. The panel adapts to your deck size:
-
-- **Small deck (≤10 cards visible)** — panel appears horizontally below the card list
-- **Large deck (11+ cards)** — panel moves to the right side of the modal as a vertical list
-
-Companion cards are excluded from the count.
-
 ### 🔒 Card Lock
 
 Right-click any card (in combat hand, draw pile, or discard pile) to **lock** it. A golden padlock replaces the mana cost orb, and the game treats the card as unaffordable: clicking, dragging, pressing space/enter, or any other play attempt produces the natural "can't afford" shake + sound feedback instead of playing the card.
@@ -53,14 +42,6 @@ The whole feature can be disabled in `BepInEx/config/com.tovak.vc.bettercards.cf
 ### ×N badge (owned card count)
 
 ![×N badge](screenshots/xN_badge.jpg)
-
-### COMPOSITION panel — horizontal (small deck)
-
-![COMPOSITION panel horizontal](screenshots/composition_horizontal.jpg)
-
-### COMPOSITION panel — vertical (large deck)
-
-![COMPOSITION panel vertical](screenshots/composition_vertical.jpg)
 
 ### Card Lock — locked card in combat hand
 
