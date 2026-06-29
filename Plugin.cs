@@ -63,6 +63,8 @@ public class Plugin : BasePlugin
             harmony.PatchAll(typeof(PlayerModel_AreAnyCardsInHandPlayable_Patch));
             harmony.PatchAll(typeof(PlayerModel_TryPlayCard_Patch));
             harmony.PatchAll(typeof(PlayerModel_SimplePlayCard_Patch));
+            harmony.PatchAll(typeof(CardModel_TryEvolveCard_Patch));
+            harmony.PatchAll(typeof(PlayerModel_OnCardEvolved_Patch));
             harmony.PatchAll(typeof(PlayableCard_TryPlayCard_Patch));
             harmony.PatchAll(typeof(PlayableCard_OnCardPlayRequested_Patch));
             int patchCount = harmony.GetPatchedMethods().Count();
@@ -248,6 +250,38 @@ public static class PlayerModel_SimplePlayCard_Patch
     }
 }
 
+// ─── Card Lock : une carte évoluée ne doit pas transmettre son verrou ───────
+[HarmonyLib.HarmonyPatch(typeof(CardModel), "TryEvolveCard")]
+public static class CardModel_TryEvolveCard_Patch
+{
+    public static void Postfix(CardModel __instance, bool __result)
+    {
+        try
+        {
+            if (Plugin.CardLockEnabled == null || !Plugin.CardLockEnabled.Value) return;
+            if (!__result) return;
+            ComboObserver.RemoveLockForCard(__instance, "TryEvolveCard");
+        }
+        catch (Exception ex) { Plugin.Log.LogWarning($"[CardLock] TryEvolveCard patch err: {ex.Message}"); }
+    }
+}
+
+// Après une évolution, le jeu peut reconstruire/remapper des CardModel. On purge
+// les verrous orphelins ou ceux dont le GUID pointe maintenant vers une autre config.
+[HarmonyLib.HarmonyPatch(typeof(PlayerModel), "OnCardEvolved")]
+public static class PlayerModel_OnCardEvolved_Patch
+{
+    public static void Postfix(PlayerModel __instance)
+    {
+        try
+        {
+            if (Plugin.CardLockEnabled == null || !Plugin.CardLockEnabled.Value) return;
+            ComboObserver.PruneInvalidOrTransferredLocks(__instance, "OnCardEvolved");
+        }
+        catch (Exception ex) { Plugin.Log.LogWarning($"[CardLock] OnCardEvolved patch err: {ex.Message}"); }
+    }
+}
+
 public class ComboObserver : MonoBehaviour
 {
     public ComboObserver(IntPtr ptr) : base(ptr) { }
@@ -258,6 +292,7 @@ public class ComboObserver : MonoBehaviour
     private int _searchCooldown = 0;
 
     private PlayerModel _cachedPlayerModel;
+    private int _lockPruneCooldown = 0;
 
     public void Awake()
     {
@@ -281,6 +316,7 @@ public class ComboObserver : MonoBehaviour
         // verrouillée, scan visuel + animations + auto-skip
         HandleRightClickToggle();
         HandleKeyboardLockedFeedback();
+        CheckLockIntegrity();
         ScanAndUpdateLockBadges();
         TickLockPopAnims();
         CheckAutoEndTurn();
@@ -1126,6 +1162,7 @@ public class ComboObserver : MonoBehaviour
     // hashable côté managed (les structs Il2Cpp ne s'utilisent pas bien dans
     // un HashSet C#).
     internal static readonly HashSet<string> _lockedCardKeys = new HashSet<string>();
+    internal static readonly Dictionary<string, string> _lockedKeyConfigs = new Dictionary<string, string>();
     const string LockBadgeName = "BC_LockBadge";
     private int _lockBadgeScanCooldown = 0;
     private static Sprite _lockBadgeSprite;
@@ -1377,7 +1414,12 @@ public class ComboObserver : MonoBehaviour
             var rk = GetLockKey(rcm);
             if (rk == null || !_lockedCardKeys.Contains(rk)) continue;
             var cfg = GetCardConfigName(rcm);
-            if (cfg != null) _lockedConfigsCache.Add(cfg);
+            if (cfg != null)
+            {
+                _lockedConfigsCache.Add(cfg);
+                if (!_lockedKeyConfigs.ContainsKey(rk))
+                    _lockedKeyConfigs[rk] = cfg;
+            }
         }
         _lockedConfigsCacheDirty = false;
     }
@@ -1468,12 +1510,15 @@ public class ComboObserver : MonoBehaviour
         if (_lockedCardKeys.Contains(k))
         {
             _lockedCardKeys.Remove(k);
+            _lockedKeyConfigs.Remove(k);
             Plugin.Log.LogInfo($"[CardLock] unlocked {k}");
             PlayClip(_clipUnlock);
         }
         else
         {
             _lockedCardKeys.Add(k);
+            var cfg = GetCardConfigName(cm);
+            if (cfg != null) _lockedKeyConfigs[k] = cfg;
             Plugin.Log.LogInfo($"[CardLock] locked {k}");
             PlayClip(_clipLock);
         }
@@ -1505,18 +1550,92 @@ public class ComboObserver : MonoBehaviour
         if (_lockedCardKeys.Contains(realGuid))
         {
             _lockedCardKeys.Remove(realGuid);
+            _lockedKeyConfigs.Remove(realGuid);
             Plugin.Log.LogInfo($"[CardLock] modal unlock {realGuid} (cfg={cfg} rank={rank})");
             PlayClip(_clipUnlock);
         }
         else
         {
             _lockedCardKeys.Add(realGuid);
+            _lockedKeyConfigs[realGuid] = cfg;
             Plugin.Log.LogInfo($"[CardLock] modal lock {realGuid} (cfg={cfg} rank={rank})");
             PlayClip(_clipLock);
         }
         _lockedConfigsCacheDirty = true;
         SaveLocks();
         TriggerAutoEndTurnCheck();
+    }
+
+    internal static void RemoveLockForCard(CardModel cm, string reason)
+    {
+        var k = GetLockKey(cm);
+        if (k == null || !_lockedCardKeys.Contains(k)) return;
+        var cfg = GetCardConfigName(cm) ?? "unknown";
+        _lockedCardKeys.Remove(k);
+        _lockedKeyConfigs.Remove(k);
+        _lockedConfigsCacheDirty = true;
+        SaveLocks();
+        Plugin.Log.LogInfo($"[CardLock] lock removed before evolution ({reason}) : {k} cfg={cfg}");
+    }
+
+    internal static void PruneInvalidOrTransferredLocks(PlayerModel pm, string reason)
+    {
+        try
+        {
+            if (_lockedCardKeys.Count == 0) return;
+            if (pm == null) pm = UObject.FindObjectOfType<PlayerModel>();
+            var allCards = pm?._allCards;
+            if (allCards == null) return;
+
+            var currentConfigs = new Dictionary<string, string>();
+            foreach (var cm in allCards)
+            {
+                if (cm == null) continue;
+                var k = GetLockKey(cm);
+                if (k == null) continue;
+                var cfg = GetCardConfigName(cm);
+                if (cfg != null) currentConfigs[k] = cfg;
+            }
+
+            int removed = 0, hydrated = 0;
+            foreach (var key in _lockedCardKeys.ToArray())
+            {
+                if (!currentConfigs.TryGetValue(key, out var currentCfg))
+                {
+                    _lockedCardKeys.Remove(key);
+                    _lockedKeyConfigs.Remove(key);
+                    removed++;
+                    continue;
+                }
+
+                if (_lockedKeyConfigs.TryGetValue(key, out var originalCfg) && !string.IsNullOrEmpty(originalCfg))
+                {
+                    if (!string.IsNullOrEmpty(currentCfg) && currentCfg != originalCfg)
+                    {
+                        _lockedCardKeys.Remove(key);
+                        _lockedKeyConfigs.Remove(key);
+                        removed++;
+                    }
+                }
+                else if (!string.IsNullOrEmpty(currentCfg))
+                {
+                    _lockedKeyConfigs[key] = currentCfg;
+                    hydrated++;
+                }
+            }
+
+            if (removed > 0)
+            {
+                _lockedConfigsCacheDirty = true;
+                SaveLocks();
+                Plugin.Log.LogInfo($"[CardLock] {removed} verrou(s) purgé(s) ({reason})");
+            }
+            else if (hydrated > 0)
+            {
+                Plugin.Log.LogInfo($"[CardLock] {hydrated} verrou(s) associé(s) à leur config ({reason})");
+            }
+        }
+        catch (Exception ex) { Plugin.Log.LogWarning($"[CardLock] prune locks failed ({reason}) : {ex.Message}"); }
     }
 
     // Persistance des verrous : un GUID par ligne dans un .txt à côté de la
@@ -1578,6 +1697,15 @@ public class ComboObserver : MonoBehaviour
             pm?.AutoEndTurnCheck();
         }
         catch { }
+    }
+
+    void CheckLockIntegrity()
+    {
+        if (--_lockPruneCooldown > 0) return;
+        _lockPruneCooldown = 120;
+        if (_lockedCardKeys.Count == 0) return;
+        if (_cachedPlayerModel == null) _cachedPlayerModel = UObject.FindObjectOfType<PlayerModel>();
+        PruneInvalidOrTransferredLocks(_cachedPlayerModel, "periodic");
     }
 
     // Polling auto-skip : si toute la main est verrouillée + non-jouable et que
