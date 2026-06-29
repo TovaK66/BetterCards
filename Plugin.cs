@@ -25,7 +25,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.3")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.4")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
