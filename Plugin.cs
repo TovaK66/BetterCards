@@ -25,7 +25,7 @@ using UnityEngine.UI;
 
 namespace BetterCards;
 
-[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.4")]
+[BepInPlugin("com.tovak.vc.bettercards", "BetterCards", "1.3.5")]
 public class Plugin : BasePlugin
 {
     internal static new BepInEx.Logging.ManualLogSource Log;
@@ -1513,6 +1513,7 @@ public class ComboObserver : MonoBehaviour
             _lockedKeyConfigs.Remove(k);
             Plugin.Log.LogInfo($"[CardLock] unlocked {k}");
             PlayClip(_clipUnlock);
+            RefreshHandCostText("unlock");
         }
         else
         {
@@ -1553,6 +1554,7 @@ public class ComboObserver : MonoBehaviour
             _lockedKeyConfigs.Remove(realGuid);
             Plugin.Log.LogInfo($"[CardLock] modal unlock {realGuid} (cfg={cfg} rank={rank})");
             PlayClip(_clipUnlock);
+            RefreshHandCostText("modal unlock");
         }
         else
         {
@@ -1564,6 +1566,36 @@ public class ComboObserver : MonoBehaviour
         _lockedConfigsCacheDirty = true;
         SaveLocks();
         TriggerAutoEndTurnCheck();
+    }
+
+    static void RefreshHandCostText(string reason)
+    {
+        try
+        {
+            var pm = UObject.FindObjectOfType<PlayerModel>();
+            var hand = pm?.HandPile?.CardPile?._cards;
+            if (pm == null || hand == null) return;
+
+            int refreshed = 0;
+            for (int i = 0; i < hand.Count; i++)
+            {
+                var cm = hand[i];
+                if (cm == null) continue;
+                try { cm.RefreshReceivesComboMultiplier(); } catch { }
+                try
+                {
+                    var cv = cm.CardView;
+                    if (cv == null) continue;
+                    cv.UpdateCostText(pm);
+                    refreshed++;
+                }
+                catch { }
+            }
+
+            if (refreshed > 0)
+                Plugin.Log.LogInfo($"[CardLock] coût/combo refresh après {reason} : {refreshed} carte(s)");
+        }
+        catch (Exception ex) { Plugin.Log.LogWarning($"[CardLock] refresh cost text failed ({reason}) : {ex.Message}"); }
     }
 
     internal static void RemoveLockForCard(CardModel cm, string reason)
